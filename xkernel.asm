@@ -1,101 +1,82 @@
 ; =============================================================================
-; XKERNEL - THE OFFICIAL XOS EXOKERNEL [XSPEC-0004]
-; Syntax: NASM (16-bit Real Mode)
-; Punto de carga físico: 0x1000:0x0000
+; XKERNEL - XOS NATIVE 64-BIT EXOKERNEL CORE
+; Syntax: NASM (64-bit Long Mode)
 ; =============================================================================
 
-bits 16
-org 0x0000                      ; Offset 0 dentro del segmento 0x1000
+bits 64
+org 0x10000                     ; El cargador colocará el Kernel en esta dirección física
 
-xkernel_entry:
-    ; 1. Asegurar que los segmentos apunten al entorno del Kernel
-    mov ax, cs
+_kernel_entry:
+    ; 1. Inicializar los registros de datos para asegurar el entorno plano de 64 bits
+    mov ax, 0x10
     mov ds, ax
     mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
 
-    ; 2. Mensaje oficial de inicialización del núcleo
-    mov si, msg_kernel_start
-    call k_print_string
+    ; 2. Limpiar la pantalla de video (Dirección de memoria VGA de texto: 0xB8000)
+    call kernel_clear_screen
 
-    ; 3. INICIALIZACIÓN DE COMPONENTES CORE (Versión 1)
-    call k_init_timer           ; Inicializar temporizador (Frecuencia base)
-    call k_init_keyboard        ; Inicializar buffer de teclado
-    call k_init_interrupts      ; Configurar tabla de interrupciones (IVT)
+    ; 3. Imprimir el mensaje de inicialización del Exokernel
+    mov rsi, msg_kernel_start
+    mov rbx, 0                  ; Fila 0
+    mov rdx, 0                  ; Columna 0
+    call kernel_print
 
-    mov si, msg_kernel_ready
-    call k_print_string
+    ; 4. TRANSFERENCIA DE CONTROL AL SUBSISTEMA (Filosofía Exokernel)
+    ; Saltamos directamente a la dirección donde el cargador dejó el binario de XSH (ej. 0x20000)
+    mov rsi, msg_kernel_jump
+    mov rbx, 1                  ; Fila 1
+    mov rdx, 0
+    call kernel_print
 
-    ; 4. CONFIGURAR PARÁMETROS Y SALTAR A EXIT
-    ; Simulamos la llamada al binario modular EXIT que ya tienes en GitHub.
-    ; En una imagen unificada, haríamos un salto lejano al segmento de EXIT.
-    jmp k_launch_exit
+    ; Salto definitivo a XSH (Shell)
+    jmp 0x20000
 
 ; =============================================================================
-; API DEL NÚCLEO: FUNCIONES DEL SUBSISTEMA DE VIDEO
+; RUTINAS DEL NÚCLEO (CONTROL DIRECTO DE HARDWARE)
 ; =============================================================================
-k_print_string:
-    push ax
-    push bx
-    mov ah, 0x0E                ; Servicio TTY de la BIOS (Hardware de video)
-    mov bh, 0x00                ; Página de video 0
+
+kernel_clear_screen:
+    mov rdi, 0xB8000            ; Puntero base a la memoria de video VGA
+    mov rcx, 2000               ; 80 columnas * 25 filas = 2000 caracteres
+    mov ax, 0x0F20              ; 0x0F = Texto blanco sobre fondo negro, 0x20 = Espacio en blanco
 .loop:
-    lodsb
-    cmp al, 0
-    je .done
-    int 0x10                    ; Interrupción nativa de video
-    jmp .loop
-.done:
-    pop bx
-    pop ax
+    mov [rdi], ax
+    add rdi, 2
+    loop .loop
     ret
 
-; =============================================================================
-; API DEL NÚCLEO: SUBSISTEMA DE TEMPORIZADOR (TIMER)
-; =============================================================================
-k_init_timer:
-    mov si, msg_sub_timer
-    call k_print_string
-    ; Aquí se reprogramaría el chip Intel 8253/8254 PIT (Programmable Interval Timer)
-    ret
-
-; =============================================================================
-; API DEL NÚCLEO: SUBSISTEMA DE TECLADO (KEYBOARD)
-; =============================================================================
-k_init_keyboard:
-    mov si, msg_sub_keyboard
-    call k_print_string
-    ; Configuración inicial del buffer de escaneo de teclas
-    ret
-
-; =============================================================================
-; API DEL NÚCLEO: SUBSISTEMA DE INTERRUPCIONES (INTERRUPTS)
-; =============================================================================
-k_init_interrupts:
-    mov si, msg_sub_int
-    call k_print_string
-    ; En las versiones posteriores, aquí mapearás las interrupciones del Exokernel completo.
-    ret
-
-; =============================================================================
-; ENRUTADOR HACIA EL SUBSISTEMA EXIT
-; =============================================================================
-k_launch_exit:
-    mov si, msg_kernel_jump
-    call k_print_string
+kernel_print:
+    ; Entrada: RSI = Dirección de la cadena (terminada en 0)
+    ;          RBX = Fila (0-24), RDX = Columna (0-79)
+    push rax
+    push rdi
     
-    ; Aquí es donde el Exokernel cede el control al Init de XOS (EXIT)
-    ; Para propósitos de simulación en esta fase, congelamos el procesador de forma segura.
-    cli
-.halt:
-    hlt
-    jmp .halt
+    ; Calcular el offset en la memoria de video: (Fila * 80 + Columna) * 2
+    imul rbx, 80
+    add rbx, rdx
+    imul rbx, 2
+    mov rdi, 0xB8000
+    add rdi, rbx                ; RDI ahora apunta a las coordenadas exactas
+
+.print_loop:
+    lodsb                       ; Cargar siguiente byte de RSI en AL
+    cmp al, 0
+    je .print_done
+    mov ah, 0x0F                ; Atributo de color: Blanco brillante
+    mov [rdi], ax               ; Escribir caracter + atributo en la pantalla
+    add rdi, 2                  ; Avanzar al siguiente espacio de caracter
+    jmp .print_loop
+
+.print_done:
+    pop rdi
+    pop rax
+    ret
 
 ; =============================================================================
-; SECCIÓN DE DATOS (IDENTIDAD GRÁFICA NATIVA XOS)
+; SECCIÓN DE DATOS DEL KERNEL
 ; =============================================================================
-msg_kernel_start    db 'XKERNEL: Despertando el Exokernel base...', 13, 10, 0
-msg_sub_timer       db '  -> Temporizador del sistema... [OK]', 13, 10, 0
-msg_sub_keyboard    db '  -> Controlador de teclado...... [OK]', 13, 10, 0
-msg_sub_int         db '  -> Vectores de interrupcion.... [OK]', 13, 10, 0
-msg_kernel_ready    db 'XKERNEL: Multiplexacion de hardware lista.', 13, 10, 0
-msg_kernel_jump     db 'XKERNEL: Saltando al proceso de inicializacion EXIT...', 13, 10, 0
+msg_kernel_start db '-> XOS Exokernel Inicializado con éxito (Modo Largo 64-bits).', 0
+msg_kernel_jump  db '-> Cediendo control seguro del hardware a XSH...', 0
