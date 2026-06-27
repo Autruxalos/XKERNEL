@@ -1,82 +1,79 @@
 ; =============================================================================
-; XKERNEL - XOS NATIVE 64-BIT EXOKERNEL CORE
-; Syntax: NASM (64-bit Long Mode)
+; XKERNEL - THE UNIFIED MULTI-ARCH EXOKERNEL (16 / 32 / 64-BIT FAT KERNEL)
+; Syntax: NASM
 ; =============================================================================
 
-bits 64
-org 0x10000                     ; El cargador colocará el Kernel en esta dirección física
-
-_kernel_entry:
-    ; 1. Inicializar los registros de datos para asegurar el entorno plano de 64 bits
-    mov ax, 0x10
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-    mov ss, ax
-
-    ; 2. Limpiar la pantalla de video (Dirección de memoria VGA de texto: 0xB8000)
-    call kernel_clear_screen
-
-    ; 3. Imprimir el mensaje de inicialización del Exokernel
-    mov rsi, msg_kernel_start
-    mov rbx, 0                  ; Fila 0
-    mov rdx, 0                  ; Columna 0
-    call kernel_print
-
-    ; 4. TRANSFERENCIA DE CONTROL AL SUBSISTEMA (Filosofía Exokernel)
-    ; Saltamos directamente a la dirección donde el cargador dejó el binario de XSH (ej. 0x20000)
-    mov rsi, msg_kernel_jump
-    mov rbx, 1                  ; Fila 1
-    mov rdx, 0
-    call kernel_print
-
-    ; Salto definitivo a XSH (Shell)
-    jmp 0x20000
+org 0x10000                     ; Dirección de carga estándar en RAM
 
 ; =============================================================================
-; RUTINAS DEL NÚCLEO (CONTROL DIRECTO DE HARDWARE)
+; SECCIÓN 1: ENTRADA EN MODO REAL (16-BITS)
 ; =============================================================================
+bits 16
+_kernel_entry_16:
+    ; Si el cargador nos dejó en 16 bits, usamos interrupciones de la BIOS
+    mov si, msg_kernel_16
+    call print_string_16
 
-kernel_clear_screen:
-    mov rdi, 0xB8000            ; Puntero base a la memoria de video VGA
-    mov rcx, 2000               ; 80 columnas * 25 filas = 2000 caracteres
-    mov ax, 0x0F20              ; 0x0F = Texto blanco sobre fondo negro, 0x20 = Espacio en blanco
+    ; Saltamos a la sección de la Shell en modo 16-bits
+    jmp _xsh_entry_16
+
+print_string_16:
+    mov ah, 0x0E
 .loop:
+    lodsb
+    cmp al, 0
+    je .done
+    int 0x10
+    jmp .loop
+.done:
+    ret
+
+msg_kernel_16 db '-> XKERNEL: Operando en Modo Real de 16-bits.', 13, 10, 0
+
+
+; =============================================================================
+; SECCIÓN 2: ENTRADA EN MODO PROTEGIDO (32-BITS)
+; =============================================================================
+bits 32
+align 16
+_kernel_entry_32:
+    ; Si despertamos en 32 bits, no hay BIOS. Escribimos directo en la pantalla VGA
+    mov esi, msg_kernel_32
+    mov edi, 0xB8000            ; Dirección física de memoria de video texto
+    mov ah, 0x0F                ; Color: Blanco
+.loop:
+    lodsb
+    cmp al, 0
+    je .done
+    mov [edi], ax
+    add edi, 2
+    jmp .loop
+.done:
+    ; Saltar a la Shell de 32 bits
+    jmp _xsh_entry_32
+
+msg_kernel_32 db '-> XKERNEL: Operando en Modo Protegido de 32-bits (VGA Direct).', 0
+
+
+; =============================================================================
+; SECCIÓN 3: ENTRADA EN MODO LARGO (64-BITS NATIVOS)
+; =============================================================================
+bits 64
+align 16
+_kernel_entry_64:
+    ; Si despertamos en 64 bits nativos, tenemos acceso a los registros Rxx expandidos
+    mov rsi, msg_kernel_64
+    mov rdi, 0xB80A0            ; Escribir en la segunda línea de la pantalla VGA (80 caracteres * 2)
+    mov ah, 0x0E                ; Color: Amarillo/Blanco
+.loop:
+    lodsb
+    cmp al, 0
+    je .done
     mov [rdi], ax
     add rdi, 2
-    loop .loop
-    ret
+    jmp .loop
+.done:
+    ; Saltar a la Shell de 64 bits
+    jmp _xsh_entry_64
 
-kernel_print:
-    ; Entrada: RSI = Dirección de la cadena (terminada en 0)
-    ;          RBX = Fila (0-24), RDX = Columna (0-79)
-    push rax
-    push rdi
-    
-    ; Calcular el offset en la memoria de video: (Fila * 80 + Columna) * 2
-    imul rbx, 80
-    add rbx, rdx
-    imul rbx, 2
-    mov rdi, 0xB8000
-    add rdi, rbx                ; RDI ahora apunta a las coordenadas exactas
-
-.print_loop:
-    lodsb                       ; Cargar siguiente byte de RSI en AL
-    cmp al, 0
-    je .print_done
-    mov ah, 0x0F                ; Atributo de color: Blanco brillante
-    mov [rdi], ax               ; Escribir caracter + atributo en la pantalla
-    add rdi, 2                  ; Avanzar al siguiente espacio de caracter
-    jmp .print_loop
-
-.print_done:
-    pop rdi
-    pop rax
-    ret
-
-; =============================================================================
-; SECCIÓN DE DATOS DEL KERNEL
-; =============================================================================
-msg_kernel_start db '-> XOS Exokernel Inicializado con éxito (Modo Largo 64-bits).', 0
-msg_kernel_jump  db '-> Cediendo control seguro del hardware a XSH...', 0
+msg_kernel_64 db '-> XKERNEL: Operando en Modo Largo de 64-bits Nativo.', 0
