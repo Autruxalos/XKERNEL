@@ -1,80 +1,64 @@
 
 ; =============================================================================
-; XKERNEL - THE UNIFIED MULTI-ARCH EXOKERNEL (16 / 32 / 64-BIT FAT KERNEL)
+; XSH - THE UNIFIED MULTI-ARCH SHELL (16 / 32 / 64-BIT)
 ; Syntax: NASM
 ; =============================================================================
 
-org 0x10000                     ; Dirección de carga estándar en RAM
+org 0x20000
 
-; =============================================================================
-; SECCIÓN 1: ENTRADA EN MODO REAL (16-BITS)
-; =============================================================================
+; OFFSET 0x00: INTERFAZ EN 16 BITS
 bits 16
-_kernel_entry_16:
-    ; Si el cargador nos dejó en 16 bits, usamos interrupciones de la BIOS
-    mov si, msg_kernel_16
-    call print_string_16
-
-    ; Saltamos a la sección de la Shell en modo 16-bits
-    jmp _xsh_entry_16
-
-print_string_16:
+_xsh_entry_16:
+    mov si, msg_xsh_16
     mov ah, 0x0E
 .loop:
     lodsb
     cmp al, 0
-    je .done
+    je .halt
     int 0x10
     jmp .loop
-.done:
-    ret
+.halt:
+    hlt
+    jmp .halt
 
-msg_kernel_16 db '-> XKERNEL: Operando en Modo Real de 16-bits.', 13, 10, 0
+msg_xsh_16 db 'Autruxalos@XOS_16bit:/$ ', 0
 
-
-; =============================================================================
-; SECCIÓN 2: ENTRADA EN MODO PROTEGIDO (32-BITS)
-; =============================================================================
+; OFFSET 0x20: INTERFAZ EN 32 BITS
+times 32 - ($ - $$) db 0
 bits 32
-align 16
-_kernel_entry_32:
-    ; Si despertamos en 32 bits, no hay BIOS. Escribimos directo en la pantalla VGA
-    mov esi, msg_kernel_32
-    mov edi, 0xB8000            ; Dirección física de memoria de video texto
-    mov ah, 0x0F                ; Color: Blanco
+_xsh_entry_32:
+    mov esi, msg_xsh_32
+    mov edi, 0xB8000 + 160      ; Tercera línea de la pantalla
+    mov ah, 0x0A
 .loop:
     lodsb
     cmp al, 0
-    je .done
+    je .halt
     mov [edi], ax
     add edi, 2
     jmp .loop
-.done:
-    ; Saltar a la Shell de 32 bits
-    jmp _xsh_entry_32
+.halt:
+    hlt
+    jmp .halt
 
-msg_kernel_32 db '-> XKERNEL: Operando en Modo Protegido de 32-bits (VGA Direct).', 0
+msg_xsh_32 db 'Autruxalos@XOS_32bit:/$ ', 0
 
-
-; =============================================================================
-; SECCIÓN 3: ENTRADA EN MODO LARGO (64-BITS NATIVOS)
-; =============================================================================
+; OFFSET 0x40: INTERFAZ EN 64 BITS
+times 64 - ($ - $$) db 0
 bits 64
-align 16
-_kernel_entry_64:
-    ; Si despertamos en 64 bits nativos, tenemos acceso a los registros Rxx expandidos
-    mov rsi, msg_kernel_64
-    mov rdi, 0xB80A0            ; Escribir en la segunda línea de la pantalla VGA (80 caracteres * 2)
-    mov ah, 0x0E                ; Color: Amarillo/Blanco
+_xsh_entry_64:
+    mov rsi, msg_xsh_64
+    mov rdi, 0xB8000 + 320      ; Cuarta línea de la pantalla
+    mov ah, 0x0B
 .loop:
     lodsb
     cmp al, 0
-    je .done
+    je .halt
     mov [rdi], ax
     add rdi, 2
     jmp .loop
-.done:
-    ; Saltar a la Shell de 64 bits
-    jmp _xsh_entry_64
+.halt:
+    hlt
+    jmp .halt
 
-msg_kernel_64 db '-> XKERNEL: Operando en Modo Largo de 64-bits Nativo.', 0
+msg_xsh_64 db 'Autruxalos@XOS_64bit:/$ ', 0
